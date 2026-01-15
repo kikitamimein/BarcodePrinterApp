@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
+import androidx.compose.ui.graphics.asImageBitmap
 
 class MainActivity : ComponentActivity() {
 
