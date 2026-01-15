@@ -16,4 +16,7 @@ interface BarcodeDao {
 
     @Query("SELECT * FROM barcode_items")
     fun getAll(): Flow<List<BarcodeItem>>
+
+    @Query("SELECT * FROM barcode_items")
+    suspend fun getAllList(): List<BarcodeItem>
 }

@@ -226,7 +226,7 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
             uri?.let {
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val items = db.barcodeDao().getAll()
+                        val items = db.barcodeDao().getAllList()
                         context.contentResolver.openOutputStream(it)?.use { output ->
                             excelHelper.writeToExcel(output, items)
                         }
