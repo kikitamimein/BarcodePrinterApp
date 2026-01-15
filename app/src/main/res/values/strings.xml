@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Barcode Printer</string>
+    <string name="scan_barcode">Scan Barcode</string>
+    <string name="add_item">Add Item</string>
+    <string name="enter_article">Enter Article</string>
+    <string name="print">Print</string>
+    <string name="settings">Settings</string>
+    <string name="printer_ip">Printer IP</string>
+    <string name="printer_port">Printer Port</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="unknown_barcode">Unknown Barcode</string>
+    <string name="item_found">Item Found</string>
+</resources>
