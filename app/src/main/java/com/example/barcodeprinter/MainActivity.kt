@@ -381,7 +381,7 @@ fun StickerPreviewDialog(
             ) {
                 if (bitmap != null) {
                     androidx.compose.foundation.Image(
-                        bitmap = androidx.compose.ui.graphics.asImageBitmap(bitmap!!),
+                        bitmap = bitmap!!.asImageBitmap(),
                         contentDescription = "Preview",
                         modifier = Modifier.fillMaxSize()
                     )
