@@ -217,18 +217,18 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
         )
     }
 
-    val excelHelper = remember { com.example.barcodeprinter.data.ExcelHelper() }
+    val txtHelper = remember { com.example.barcodeprinter.data.TxtHelper() }
 
     // Export Launcher
     val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
         onResult = { uri ->
             uri?.let {
                 scope.launch(Dispatchers.IO) {
                     try {
                         val items = db.barcodeDao().getAllList()
                         context.contentResolver.openOutputStream(it)?.use { output ->
-                            excelHelper.writeToExcel(output, items)
+                            txtHelper.writeToTxt(output, items)
                         }
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "Database exported successfully", Toast.LENGTH_SHORT).show()
@@ -252,8 +252,8 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
                 scope.launch(Dispatchers.IO) {
                     try {
                         context.contentResolver.openInputStream(it)?.use { input ->
-                            val items = excelHelper.readFromExcel(input)
-                            items.forEach { item ->
+                            val items = txtHelper.readFromTxt(input)
+                            for (item in items) {
                                 db.barcodeDao().insert(item)
                             }
                         }
@@ -293,17 +293,17 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Button(
-                            onClick = { importLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) },
+                            onClick = { importLauncher.launch(arrayOf("text/plain")) },
                             modifier = Modifier.weight(1f).padding(end = 4.dp)
                         ) {
-                            Text("Import Xlsx")
+                            Text("Import Txt")
                         }
                         
                         Button(
-                            onClick = { exportLauncher.launch("barcode_db.xlsx") },
+                            onClick = { exportLauncher.launch("barcode_db.txt") },
                             modifier = Modifier.weight(1f).padding(start = 4.dp)
                         ) {
-                            Text("Export Xlsx")
+                            Text("Export Txt")
                         }
                     }
                 }
