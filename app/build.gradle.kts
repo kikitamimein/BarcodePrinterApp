@@ -49,12 +49,6 @@ android {
         }
     }
     // Fix: Add resource configurations if needed or ensure safe defaults
-
-    configurations.all {
-        resolutionStrategy {
-            force("androidx.appcompat:appcompat:1.6.1")
-        }
-    }
 }
 
 dependencies {
