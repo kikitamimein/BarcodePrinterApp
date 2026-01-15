@@ -76,9 +76,5 @@ dependencies {
     // ML Kit
     implementation(libs.mlkit.barcode.scanning)
 
-    // Apache POI (Excel)
-    implementation(libs.poi)
-    implementation(libs.poi.ooxml)
-
     debugImplementation(libs.androidx.ui.tooling)
 }
