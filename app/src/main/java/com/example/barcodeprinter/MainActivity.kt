@@ -217,6 +217,60 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
         )
     }
 
+    val excelHelper = remember { com.example.barcodeprinter.data.ExcelHelper() }
+
+    // Export Launcher
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        onResult = { uri ->
+            uri?.let {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val items = db.barcodeDao().getAll()
+                        context.contentResolver.openOutputStream(it)?.use { output ->
+                            excelHelper.writeToExcel(output, items)
+                        }
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Database exported successfully", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    // Import Launcher
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            uri?.let {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openInputStream(it)?.use { input ->
+                            val items = excelHelper.readFromExcel(input)
+                            items.forEach { item ->
+                                db.barcodeDao().insert(item)
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Database imported successfully", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+    )
+
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
@@ -226,11 +280,37 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
                     OutlinedTextField(value = printerIp, onValueChange = { printerIp = it }, label = { Text("IP Address") })
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(value = printerPort, onValueChange = { printerPort = it }, label = { Text("Port") })
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text("Database Management", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Button(
+                            onClick = { importLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) },
+                            modifier = Modifier.weight(1f).padding(end = 4.dp)
+                        ) {
+                            Text("Import Xlsx")
+                        }
+                        
+                        Button(
+                            onClick = { exportLauncher.launch("barcode_db.xlsx") },
+                            modifier = Modifier.weight(1f).padding(start = 4.dp)
+                        ) {
+                            Text("Export Xlsx")
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Button(onClick = { showSettingsDialog = false }) {
-                    Text("Save")
+                    Text("Close")
                 }
             }
         )
