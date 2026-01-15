@@ -87,6 +87,28 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
         }
     }
 
+    var previewDialogFile by remember { mutableStateOf<java.io.File?>(null) }
+    
+    // Preview Dialog
+    if (previewDialogFile != null) {
+        StickerPreviewDialog(
+            pdfFile = previewDialogFile!!,
+            onConfirm = {
+                scope.launch {
+                    val fileToPrint = previewDialogFile!! // Capture for coroutine
+                    previewDialogFile = null // Dismiss dialog first
+                    sendToPrinter(context, printerManager, fileToPrint, printerIp, printerPort.toIntOrNull() ?: 9100)
+                    // Reset scan after print confirmation
+                    scannedCode = null
+                    foundItem = null
+                }
+            },
+            onDismiss = { 
+                previewDialogFile = null 
+            }
+        )
+    }
+
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = { showSettingsDialog = true }) {
@@ -106,7 +128,8 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
                 if (hasCameraPermission) {
                     CameraPreview(
                         onBarcodeScanned = { code ->
-                            if (scannedCode != code) {
+                            // Don't scan if dialogs are open
+                            if (scannedCode != code && !showAddDialog && !showSettingsDialog && previewDialogFile == null) {
                                 scannedCode = code
                                 scope.launch {
                                     foundItem = db.barcodeDao().getByCode(code)
@@ -141,10 +164,9 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
                         Button(
                             onClick = {
                                 scope.launch {
-                                    printLabel(context, printerManager, scannedCode!!, foundItem!!.article, printerIp, printerPort.toIntOrNull() ?: 9100)
-                                    // Reset scan after print
-                                    scannedCode = null
-                                    foundItem = null
+                                    generateAndShowPreview(context, printerManager, scannedCode!!, foundItem!!.article) { file ->
+                                        previewDialogFile = file
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -195,11 +217,11 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
                              db.barcodeDao().insert(item)
                              foundItem = item
                              showAddDialog = false
-                             // Auto print logic could go here, or user clicks print manually.
-                             // Requirement: "при успешном считывании(а так же после добавления нового шк) приложение генерирует стикер"
-                             printLabel(context, printerManager, item.code, item.article, printerIp, printerPort.toIntOrNull() ?: 9100)
-                             scannedCode = null
-                             foundItem = null
+                             
+                             // Show preview instead of direct print
+                             generateAndShowPreview(context, printerManager, item.code, item.article) { file ->
+                                 previewDialogFile = file
+                             }
                          }
                     }
                 }) {
@@ -317,9 +339,89 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
     }
 }
 
-suspend fun printLabel(context: Context, manager: PrinterManager, code: String, article: String, ip: String, port: Int) {
-    try {
+@Composable
+fun StickerPreviewDialog(
+    pdfFile: java.io.File,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    LaunchedEffect(pdfFile) {
+        withContext(Dispatchers.IO) {
+            try {
+                val fileDescriptor = android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+                val renderer = android.graphics.pdf.PdfRenderer(fileDescriptor)
+                val page = renderer.openPage(0)
+                
+                // Render with higher quality/scale for preview
+                val w = page.width * 2
+                val h = page.height * 2
+                val bps = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+                page.render(bps, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                
+                page.close()
+                renderer.close()
+                fileDescriptor.close()
+                bitmap = bps
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Preview Sticker") },
+        text = {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(200.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (bitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = androidx.compose.ui.graphics.asImageBitmap(bitmap!!),
+                        contentDescription = "Preview",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    CircularProgressIndicator()
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text("Print")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+suspend fun generateAndShowPreview(
+    context: Context,
+    manager: PrinterManager,
+    code: String,
+    article: String,
+    onPreviewReady: (java.io.File) -> Unit
+) {
+     try {
         val pdf = manager.generatePdf(code, article)
+        onPreviewReady(pdf)
+    } catch (e: Exception) {
+         withContext(Dispatchers.Main) {
+            Toast.makeText(context, "Preview failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        Log.e("Preview", "Error", e)
+    }
+}
+
+suspend fun sendToPrinter(context: Context, manager: PrinterManager, pdf: java.io.File, ip: String, port: Int) {
+    try {
         manager.sendToPrinter(pdf, ip, port)
         withContext(Dispatchers.Main) {
             Toast.makeText(context, "Sent to printer", Toast.LENGTH_SHORT).show()
