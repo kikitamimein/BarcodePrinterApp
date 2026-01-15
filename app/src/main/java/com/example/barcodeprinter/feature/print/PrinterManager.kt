@@ -31,20 +31,42 @@ class PrinterManager(private val context: Context) {
 
         val paint = Paint()
         paint.color = Color.BLACK
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        paint.textSize = 10f
+        
+        // 1. Draw Barcode Image
+        // Use CODE_128 as fallback, but if it looks like EAN-13, use EAN-13 for better look
+        val format = if (barcode.length == 13 && barcode.all { it.isDigit() }) {
+             com.google.zxing.BarcodeFormat.EAN_13
+        } else {
+             com.google.zxing.BarcodeFormat.CODE_128
+        }
+        
+        try {
+            // Barcode height ~80pts (about 70% of 113 height)
+            val barcodeBitmap = createBarcodeBitmap(barcode, format, 140, 70)
+            // Center horizontally: (156 - 140) / 2 = 8
+            canvas.drawBitmap(barcodeBitmap, 8f, 10f, null)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Fallback text if generation fails
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.textSize = 12f
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText("No Barcode", pageWidth / 2f, 40f, paint)
+        }
 
-        // Draw Article
+        // 2. Draw Barcode Numbers (Human Readable)
+        paint.typeface = Typeface.DEFAULT
+        paint.textSize = 12f
         paint.textAlign = Paint.Align.CENTER
-        canvas.drawText(article, pageWidth / 2f, 20f, paint)
+        // Provide spacing between digits if EAN-13? For now simple text.
+        // Position: below barcode (10 + 70 + 12 approx) -> 92
+        canvas.drawText(barcode.chunked(1).joinToString(" "), pageWidth / 2f, 92f, paint)
 
-        // Draw Barcode Text (Simulated as text for now, should generate barcode image realistically but text is placeholder)
-        // Ideally we draw the actual barcode lines here.
-        // For simple MVP text is okay, but user asked for "print that barcode".
-        // Let's rely on a barcode font or drawing logic if possible?
-        // Or simply draw the code bigger.
-        paint.textSize = 14f
-        canvas.drawText(barcode, pageWidth / 2f, 60f, paint)
+        // 3. Draw Article Text (Bottom, Small)
+        paint.textSize = 6f
+        paint.textAlign = Paint.Align.CENTER
+        // Bottom position: pageHeight - 5 -> 108
+        canvas.drawText("Aрт: $article", pageWidth / 2f, 108f, paint)
 
         pdfDocument.finishPage(page)
 
@@ -55,6 +77,22 @@ class PrinterManager(private val context: Context) {
         ops.close()
 
         return file
+    }
+    
+    private fun createBarcodeBitmap(contents: String, format: com.google.zxing.BarcodeFormat, width: Int, height: Int): android.graphics.Bitmap {
+        val writer = com.google.zxing.MultiFormatWriter()
+        val bitMatrix = writer.encode(contents, format, width, height)
+        val w = bitMatrix.width
+        val h = bitMatrix.height
+        val pixels = IntArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                pixels[y * w + x] = if (bitMatrix[x, y]) Color.BLACK else Color.TRANSPARENT
+            }
+        }
+        val bitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        return bitmap
     }
 
     suspend fun sendToPrinter(file: File, ip: String, port: Int) = withContext(Dispatchers.IO) {
