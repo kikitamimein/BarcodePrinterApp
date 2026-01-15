@@ -75,6 +75,9 @@ dependencies {
 
     // ML Kit
     implementation(libs.mlkit.barcode.scanning)
+    
+    // ZXing (Barcode Generation)
+    implementation(libs.zxing.core)
 
     debugImplementation(libs.androidx.ui.tooling)
 }
