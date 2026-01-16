@@ -113,6 +113,8 @@ class PrinterManager(private val context: Context) {
             cmds.append("SIZE 55 mm, 40 mm\r\n")
             cmds.append("GAP 2 mm, 0 mm\r\n")
             cmds.append("DIRECTION 0\r\n")
+            // Set codepage to 1251 (Cyrillic)
+            cmds.append("CODEPAGE 1251\r\n")
             cmds.append("CLS\r\n")
             
             // Checking if barcode is numbers only (EAN13)
@@ -121,49 +123,56 @@ class PrinterManager(private val context: Context) {
             
             // Width Calculation
             // EAN13: 95 modules.
-            // Code 128 (Digits): Pack 2 digits per symbol (Code C).
-            // Length 12 digits -> ~6 data symbols + start/check/stop ~100 modules.
-            // If we use narrow=4: 100*4 = 400 dots. Fits in 440.
-            // If longer, we must reduce to 3 or 2.
-            val isCompactNum = barcode.all { it.isDigit() } && barcode.length <= 14
-            val narrow = if (isEan13 || isCompactNum) 3 else 2 
-            // Using 3 is safer for "Full Length" without overflow risk for slightly longer codes.
-            // 4 might be too tight for edge cases. 
-            // 3: 100*3 = 300. 300/440 = 68%. 
-            // Let's try 4 for short numeric codes to really stretch it? 
-            // User requested "Full length". 
-            val finalNarrow = if (barcode.length <= 12 && barcode.all { it.isDigit() }) 4 else 3
+            // Using narrow=4 -> 380 dots. Fits in 440.
+            // Previous logic excluded length 13 from narrow 4. Fixed.
+            val finalNarrow = if (barcode.length <= 13 && barcode.all { it.isDigit() }) 4 else 2 // 3 might be too wide for longer 128? Safe fallback to 2.
+            // Actually, let's use 3 for intermediate? 
+            // 110 modules * 3 = 330. Safe.
+            // 110 modules * 4 = 440. Risky.
+            // EAN 13 is 95 modules. 95*4=380. Safe.
+            
+            // Logic:
+            // If EAN13 (95) -> 4 fits.
+            // If Code128 and concise -> 4 might fit.
+            // Let's force 4 for EAN13 explicitly.
+            val calculatedNarrow = if (isEan13) 4 else if (barcode.length <= 12 && barcode.all { it.isDigit() }) 4 else 3
+            
+            // Safe check for overflow
+            // Max width 440.
+            // EAN13: 95 * narrow.
+            // 128: (Len * 11). Code C is compact.
+            // Let's stick strictly to barcode type.
+            
+            val actualNarrow = if (isEan13) 4 else {
+                 // Check if fits with 4?
+                 val roughModules = barcode.length * 11 // Worst case code B
+                 if (roughModules * 4 <= 440) 4 else if (roughModules * 3 <= 440) 3 else 2
+                 // Simplified: Just use 2 for general Code128 to be safe, or 3 if short.
+                 if (barcode.length < 10) 3 else 2
+            }
+            // Override for the specific case user has (13 digits numeric, but maybe scanner reads as code128? No, likely EAN13 logic applies).
+            // But above I set barcodeType EAN13 if 13 digits.
+            val useNarrow = if (isEan13) 4 else actualNarrow
 
             // Height Calculation
-            // User wants minimal distance between Code and Article (at bottom).
-            // Article Y ~ 270. (Font height ~20-30).
-            // Barcode Text (built-in) requires ~30 dots.
-            // So Barcode Bars should end at ~240.
-            // Start Y = 20. Height = 220.
             val barHeight = 220
 
             // Layout Barcode
-            // Calculate Center X
-            // Approx width estimate
-            val estimatedWidth = if (isEan13) 95 * finalNarrow else (barcode.length * 11 * finalNarrow) // Rough calc for 128
-            // For Code 128C it is much shorter: (Len/2 + 4) * 11 * narrow.
-            val actualWidth = if (isEan13) 95*finalNarrow else if(barcode.all { it.isDigit() }) ((barcode.length/2 + 5)*11*finalNarrow) else (barcode.length * 11 * finalNarrow)
+            val estimatedWidth = if (isEan13) 95 * useNarrow else (barcode.length * 11 * useNarrow)
             
-            val x = (440 - actualWidth) / 2
-            val startX = if (x > 20) x else 20
+            val x = (440 - estimatedWidth) / 2
+            val startX = if (x > 0) x else 10 // Allow small margin
 
-            cmds.append("BARCODE $startX,20,\"$barcodeType\",$barHeight,1,0,$finalNarrow,$finalNarrow,\"$barcode\"\r\n")
+            cmds.append("BARCODE $startX,20,\"$barcodeType\",$barHeight,1,0,$useNarrow,$useNarrow,\"$barcode\"\r\n")
             
             // ARTICLE TEXT
-            // Position: Very bottom.
-            // 40mm = 320 dots.
-            // Let's place at 280 (leaving 40 dots / 5mm margin at bottom)
             val fullArticle = "Арт: $article"
             
-            // Center Text
-            val charWidth = 10 // Font 2 approx width scaled? Font 2 is 8x12.
-            // Let's estimate
-            val textWidth = fullArticle.length * 8
+            // To support Cyrillic, we need to ensure bytes are sent correctly.
+            // We use standard font "2" or "TSS24.BF2" (if available). Font "2" is usually 12x24.
+            // Let's center it.
+            val charWidth = 12 // Font 2 width approx
+            val textWidth = fullArticle.length * charWidth
             val textX = (440 - textWidth) / 2
             val finalTx = if (textX > 10) textX else 10
             
@@ -171,7 +180,14 @@ class PrinterManager(private val context: Context) {
             
             cmds.append("PRINT 1,1\r\n")
             
-            val bytes = cmds.toString().toByteArray(java.nio.charset.Charset.forName("GB18030")) 
+            // Encode command string to windows-1251
+            val charset = try {
+                java.nio.charset.Charset.forName("windows-1251")
+            } catch (e: Exception) {
+                java.nio.charset.Charset.defaultCharset()
+            }
+            
+            val bytes = cmds.toString().toByteArray(charset)
             outputStream.write(bytes)
             outputStream.flush()
         }
