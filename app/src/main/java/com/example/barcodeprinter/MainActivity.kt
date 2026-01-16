@@ -96,12 +96,19 @@ fun BarcodeApp(db: BarcodeDatabase, printerManager: PrinterManager) {
             pdfFile = previewDialogFile!!,
             onConfirm = {
                 scope.launch {
-                    val fileToPrint = previewDialogFile!! // Capture for coroutine
+                    val code = scannedCode
+                    val article = foundItem?.article
                     previewDialogFile = null // Dismiss dialog first
-                    sendToPrinter(context, printerManager, fileToPrint, printerIp, printerPort.toIntOrNull() ?: 9100)
-                    // Reset scan after print confirmation
-                    scannedCode = null
-                    foundItem = null
+                    
+                    if (code != null && article != null) {
+                        sendToPrinter(context, printerManager, code, article, printerIp, printerPort.toIntOrNull() ?: 9100)
+                    } else {
+                         Toast.makeText(context, "Error: Item data missing", Toast.LENGTH_SHORT).show()
+                    }
+                    
+                    // Reset scan after print confirmation (optional, maybe keep it?)
+                    // scannedCode = null
+                    // foundItem = null
                 }
             },
             onDismiss = { 
@@ -421,11 +428,11 @@ suspend fun generateAndShowPreview(
     }
 }
 
-suspend fun sendToPrinter(context: Context, manager: PrinterManager, pdf: java.io.File, ip: String, port: Int) {
+suspend fun sendToPrinter(context: Context, manager: PrinterManager, barcode: String, article: String, ip: String, port: Int) {
     try {
-        manager.sendToPrinter(pdf, ip, port)
+        manager.printLabel(barcode, article, ip, port)
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Sent to printer", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Label sent to printer", Toast.LENGTH_SHORT).show()
         }
     } catch (e: Exception) {
          withContext(Dispatchers.Main) {

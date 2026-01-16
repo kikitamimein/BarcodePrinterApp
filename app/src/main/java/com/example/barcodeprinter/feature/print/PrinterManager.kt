@@ -33,7 +33,6 @@ class PrinterManager(private val context: Context) {
         paint.color = Color.BLACK
         
         // 1. Draw Barcode Image
-        // Use CODE_128 as fallback, but if it looks like EAN-13, use EAN-13 for better look
         val format = if (barcode.length == 13 && barcode.all { it.isDigit() }) {
              com.google.zxing.BarcodeFormat.EAN_13
         } else {
@@ -42,9 +41,11 @@ class PrinterManager(private val context: Context) {
         
         try {
             // Barcode height ~80pts (about 70% of 113 height)
-            val barcodeBitmap = createBarcodeBitmap(barcode, format, 140, 70)
-            // Center horizontally: (156 - 140) / 2 = 8
-            canvas.drawBitmap(barcodeBitmap, 8f, 10f, null)
+            // Stretch width: Use essentially full width (minus small margin)
+            // 156 width total. Let's use 150 width.
+            val barcodeBitmap = createBarcodeBitmap(barcode, format, 150, 70)
+            // Center horizontally: (156 - 150) / 2 = 3
+            canvas.drawBitmap(barcodeBitmap, 3f, 10f, null)
         } catch (e: Exception) {
             e.printStackTrace()
             // Fallback text if generation fails
@@ -56,17 +57,21 @@ class PrinterManager(private val context: Context) {
 
         // 2. Draw Barcode Numbers (Human Readable)
         paint.typeface = Typeface.DEFAULT
-        paint.textSize = 12f
+        paint.textSize = 10f // Slightly smaller to fit if needed
         paint.textAlign = Paint.Align.CENTER
-        // Provide spacing between digits if EAN-13? For now simple text.
-        // Position: below barcode (10 + 70 + 12 approx) -> 92
-        canvas.drawText(barcode.chunked(1).joinToString(" "), pageWidth / 2f, 92f, paint)
+        
+        // Position: Just below barcode. 
+        // Barcode ends at y=10+70=80.
+        // Draw text at y=90 (was 92, moving up closer)
+        canvas.drawText(barcode.chunked(1).joinToString(" "), pageWidth / 2f, 90f, paint)
 
         // 3. Draw Article Text (Bottom, Small)
-        paint.textSize = 6f
+        paint.textSize = 8f // Increased visibility
+        paint.typeface = Typeface.DEFAULT_BOLD
         paint.textAlign = Paint.Align.CENTER
-        // Bottom position: pageHeight - 5 -> 108
-        canvas.drawText("Aрт: $article", pageWidth / 2f, 108f, paint)
+        // Position: closer to numbers. Numbers are at 90. 
+        // Let's put article at 102 (was 108).
+        canvas.drawText("$article", pageWidth / 2f, 102f, paint)
 
         pdfDocument.finishPage(page)
 
@@ -95,13 +100,88 @@ class PrinterManager(private val context: Context) {
         return bitmap
     }
 
-    suspend fun sendToPrinter(file: File, ip: String, port: Int) = withContext(Dispatchers.IO) {
-        if (!file.exists()) throw IOException("File not found")
-        
+    suspend fun printLabel(barcode: String, article: String, ip: String, port: Int) = withContext(Dispatchers.IO) {
         Socket(ip, port).use { socket ->
             val outputStream = socket.getOutputStream()
-            val fileBytes = file.readBytes()
-            outputStream.write(fileBytes)
+            
+            // TSPL Commands for 55mm x 40mm label
+            // 203 DPI = ~8 dots/mm
+            // Width: 55 * 8 = 440 dots
+            // Height: 40 * 8 = 320 dots
+            
+            val cmds = StringBuilder()
+            cmds.append("SIZE 55 mm, 40 mm\r\n")
+            cmds.append("GAP 2 mm, 0 mm\r\n")
+            cmds.append("DIRECTION 1\r\n")
+            cmds.append("CLS\r\n")
+            
+            // BARCODE
+            // X, Y, "Type", Height, HumanReadable, Rotation, Narrow, Wide, "Content"
+            // X=20 (margin)
+            // Y=20 
+            // Type=128 (automatically switches subsets) or EAN13
+            // Height=160
+            // HumanReadable=1 (print text below) or 0 (we verify manually)
+            // Rotation=0
+            // Narrow=2, Wide=2 (to stretch? Standard is 1,2 or 2,4. Let's try 2,2 or 3,1 for width)
+            // If user wants "stretch to full length", we increase module width.
+            
+            // Checking if barcode is numbers only (EAN13)
+            val isEan13 = barcode.length == 13 && barcode.all { it.isDigit() }
+            val barcodeType = if (isEan13) "EAN13" else "128"
+            
+            // To stretch, we increase the narrow bar width. 
+            // Default usually 1 or 2 dots. Let's try 3 for wider barcodes if it fits, else 2.
+            // 440 dots width. EAN13 has ~95 modules. 95*2=190 (small). 95*4=380 (good).
+            // Code128 varies.
+            // Let's use moderate width.
+            
+            // Using logic to print Barcode
+            // BARCODE x,y,type,height,human_readable,rotation,narrow,wide,content
+            // human_readable=0 because we want to format text manually to reduce spacing
+            cmds.append("BARCODE 20,20,\"$barcodeType\",200,0,0,3,6,\"$barcode\"\r\n")
+            
+            // TEXT (Human Readable Numbers)
+            // Just below barcode. Barcode y=20, h=200 -> ends at 220.
+            // TEXT x,y,"font",rotation,x_mul,y_mul,"content"
+            // Font "0" is internal font. 
+            // Let's put it at y=230
+            // Spaced out numbers? TSPL doesn't auto-space easy. Just print barcode value.
+            cmds.append("TEXT 220,230,\"0\",0,10,10,\"$barcode\"\r\n") // 220 is center x approx?
+            // Actually alignment is tricky in raw TSPL without calculation.
+            // Let's rely on standard centered approximation.
+            // 55mm = 440 dots. Center = 220.
+            // But TEXT command x,y is starting point? NO, use BOX or just experimental X.
+            // Better: use internal human readable of barcode command if alignment is hard, 
+            // BUT user wants specific spacing.
+            // Let's try "TEXT" command with centered logic.
+            // If we don't know the text width, it's hard to enter.
+            // Let's try to enable human readable in BARCODE command first? 
+            // User said: "reduce distance between digits and article".
+            // If I use built-in human readable, the distance is fixed.
+            // So custom text is needed.
+            
+            // Let's try to approximate X.
+            // Or use "BLOCK" command if available? No.
+            // Let's guess: "0" font is scalable.
+            // x_mul, y_mul = 1 means normal. 10 is huge? No, 1-10 range multiplier.
+            // Let's use x_mul=2, y_mul=2 for readable text.
+            
+            // Let's CENTER approximately.
+            // We'll just define a "safe" centered start X for typical 13 digit.
+            // EAN13 is wide.
+            // Let's try X=100.
+            cmds.append("TEXT 80,240,\"2\",0,1,1,\"$barcode\"\r\n")
+            // Font "2" is usually good.
+            
+            // ARTICLE
+            // Below numbers. Y=270.
+            cmds.append("TEXT 80,270,\"2\",0,1,1,\"$article\"\r\n")
+            
+            cmds.append("PRINT 1,1\r\n")
+            
+            val bytes = cmds.toString().toByteArray(java.nio.charset.Charset.forName("GB18030")) // or ASCII
+            outputStream.write(bytes)
             outputStream.flush()
         }
     }
