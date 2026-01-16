@@ -112,75 +112,64 @@ class PrinterManager(private val context: Context) {
             val cmds = StringBuilder()
             cmds.append("SIZE 55 mm, 40 mm\r\n")
             cmds.append("GAP 2 mm, 0 mm\r\n")
-            cmds.append("DIRECTION 1\r\n")
+            cmds.append("DIRECTION 0\r\n") // Changed to 0 to fix rotation
             cmds.append("CLS\r\n")
-            
-            // BARCODE
-            // X, Y, "Type", Height, HumanReadable, Rotation, Narrow, Wide, "Content"
-            // X=20 (margin)
-            // Y=20 
-            // Type=128 (automatically switches subsets) or EAN13
-            // Height=160
-            // HumanReadable=1 (print text below) or 0 (we verify manually)
-            // Rotation=0
-            // Narrow=2, Wide=2 (to stretch? Standard is 1,2 or 2,4. Let's try 2,2 or 3,1 for width)
-            // If user wants "stretch to full length", we increase module width.
             
             // Checking if barcode is numbers only (EAN13)
             val isEan13 = barcode.length == 13 && barcode.all { it.isDigit() }
             val barcodeType = if (isEan13) "EAN13" else "128"
             
-            // To stretch, we increase the narrow bar width. 
-            // Default usually 1 or 2 dots. Let's try 3 for wider barcodes if it fits, else 2.
-            // 440 dots width. EAN13 has ~95 modules. 95*2=190 (small). 95*4=380 (good).
-            // Code128 varies.
-            // Let's use moderate width.
+            // BARCODE
+            // X, Y, "Type", Height, HumanReadable, Rotation, Narrow, Wide, "Content"
+            // X=24 (Center horizontally: 440 width. EAN13 Narrow=4 -> ~380 dots wide. (440-380)/2 = 30)
+            // Y=20 
+            // Height=160 (20mm)
+            // HumanReadable=1 (Enable built-in text for standard look)
+            // Narrow=4 (Stretch width: 95*4 = 380 dots)
             
-            // Using logic to print Barcode
-            // BARCODE x,y,type,height,human_readable,rotation,narrow,wide,content
-            // human_readable=0 because we want to format text manually to reduce spacing
-            cmds.append("BARCODE 20,20,\"$barcodeType\",200,0,0,3,6,\"$barcode\"\r\n")
+            val narrow = if (isEan13) 4 else 2
+            // Calculate X to center
+            val barcodeWidth = if (isEan13) 380 else barcode.length * 11 * narrow // Approx for 128
+            val x = (440 - barcodeWidth) / 2
+            val startX = if (x > 0) x else 10
+
+            cmds.append("BARCODE $startX,20,\"$barcodeType\",160,1,0,$narrow,$narrow,\"$barcode\"\r\n")
             
-            // TEXT (Human Readable Numbers)
-            // Just below barcode. Barcode y=20, h=200 -> ends at 220.
-            // TEXT x,y,"font",rotation,x_mul,y_mul,"content"
-            // Font "0" is internal font. 
-            // Let's put it at y=230
-            // Spaced out numbers? TSPL doesn't auto-space easy. Just print barcode value.
-            cmds.append("TEXT 220,230,\"0\",0,10,10,\"$barcode\"\r\n") // 220 is center x approx?
-            // Actually alignment is tricky in raw TSPL without calculation.
-            // Let's rely on standard centered approximation.
-            // 55mm = 440 dots. Center = 220.
-            // But TEXT command x,y is starting point? NO, use BOX or just experimental X.
-            // Better: use internal human readable of barcode command if alignment is hard, 
-            // BUT user wants specific spacing.
-            // Let's try "TEXT" command with centered logic.
-            // If we don't know the text width, it's hard to enter.
-            // Let's try to enable human readable in BARCODE command first? 
-            // User said: "reduce distance between digits and article".
-            // If I use built-in human readable, the distance is fixed.
-            // So custom text is needed.
+            // ARTICLE TEXT
+            // Position: Below barcode built-in text.
+            // Barcode Y=20, Height=160. Text usually adds ~40-50 dots. Block ends ~220.
+            // Let's place article at Y=230 to be close.
+            // Font "2" (Standard)
+            cmds.append("TEXT 220,230,\"2\",0,1,1,2,\"$article\"\r\n") // Center alignment needs manual calc or alignment command if available?
+            // TSPL TEXT doesn't auto-center unless specific firmware. 
+            // We use center coordinates? No, TEXT x,y is start.
+            // To center text properly we need to know char width.
+            // Font 2 is ~8x12 dots. 
+            // Let's simplified: Start at X=20 and let it print? Or estimate center.
+            // Better: use a safe left margin since length varies.
+            // Or try to center coarsely. 
+            // 440 width. Center 220.
+            // "TEXT" command has no alignment param in standard TSPL (some extensions do).
+            // Let's rely on visual center 220 is NOT center alignment, it's starting position.
+            // Wait, for TEXT command: TEXT x, y, "font", rotation, x-mul, y-mul, "content"
+            // There is no alignment.
+            // We'll estimate start X based on length?
+            // "Art: XYZ" ~ 10 chars. 10 * 8 * 1 = 80 dots wide. center = 220 - 40 = 180.
+            // Let's just start at X=20 to be safe and left-aligned, or try to center.
+            // User requested "like second photo". Second photo text is Centered.
+            // In second photo: "Art. NabZak..." is centered.
+            // I will use a simple heuristic to center.
             
-            // Let's try to approximate X.
-            // Or use "BLOCK" command if available? No.
-            // Let's guess: "0" font is scalable.
-            // x_mul, y_mul = 1 means normal. 10 is huge? No, 1-10 range multiplier.
-            // Let's use x_mul=2, y_mul=2 for readable text.
+            val charWidth = 8 // Font 2 approximate width
+            val textWidth = article.length * charWidth
+            val textX = (440 - textWidth) / 2
+            val finalTextX = if (textX > 0) textX else 10
             
-            // Let's CENTER approximately.
-            // We'll just define a "safe" centered start X for typical 13 digit.
-            // EAN13 is wide.
-            // Let's try X=100.
-            cmds.append("TEXT 80,240,\"2\",0,1,1,\"$barcode\"\r\n")
-            // Font "2" is usually good.
-            
-            // ARTICLE
-            // Below numbers. Y=270.
-            cmds.append("TEXT 80,270,\"2\",0,1,1,\"$article\"\r\n")
+            cmds.append("TEXT $finalTextX,230,\"2\",0,1,1,\"$article\"\r\n")
             
             cmds.append("PRINT 1,1\r\n")
             
-            val bytes = cmds.toString().toByteArray(java.nio.charset.Charset.forName("GB18030")) // or ASCII
+            val bytes = cmds.toString().toByteArray(java.nio.charset.Charset.forName("GB18030")) 
             outputStream.write(bytes)
             outputStream.flush()
         }
