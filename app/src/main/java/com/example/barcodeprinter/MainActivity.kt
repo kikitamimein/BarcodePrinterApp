@@ -398,8 +398,17 @@ fun StickerPreviewDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm) {
-                Text("Print")
+            var isPrinting by remember { mutableStateOf(false) }
+            Button(
+                onClick = {
+                    if (!isPrinting) {
+                        isPrinting = true
+                        onConfirm()
+                    }
+                },
+                enabled = !isPrinting
+            ) {
+                Text(if (isPrinting) "Printing..." else "Print")
             }
         },
         dismissButton = {

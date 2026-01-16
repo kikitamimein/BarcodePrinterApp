@@ -112,60 +112,62 @@ class PrinterManager(private val context: Context) {
             val cmds = StringBuilder()
             cmds.append("SIZE 55 mm, 40 mm\r\n")
             cmds.append("GAP 2 mm, 0 mm\r\n")
-            cmds.append("DIRECTION 0\r\n") // Changed to 0 to fix rotation
+            cmds.append("DIRECTION 0\r\n")
             cmds.append("CLS\r\n")
             
             // Checking if barcode is numbers only (EAN13)
             val isEan13 = barcode.length == 13 && barcode.all { it.isDigit() }
             val barcodeType = if (isEan13) "EAN13" else "128"
             
-            // BARCODE
-            // X, Y, "Type", Height, HumanReadable, Rotation, Narrow, Wide, "Content"
-            // X=24 (Center horizontally: 440 width. EAN13 Narrow=4 -> ~380 dots wide. (440-380)/2 = 30)
-            // Y=20 
-            // Height=160 (20mm)
-            // HumanReadable=1 (Enable built-in text for standard look)
-            // Narrow=4 (Stretch width: 95*4 = 380 dots)
-            
-            val narrow = if (isEan13) 4 else 2
-            // Calculate X to center
-            val barcodeWidth = if (isEan13) 380 else barcode.length * 11 * narrow // Approx for 128
-            val x = (440 - barcodeWidth) / 2
-            val startX = if (x > 0) x else 10
+            // Width Calculation
+            // EAN13: 95 modules.
+            // Code 128 (Digits): Pack 2 digits per symbol (Code C).
+            // Length 12 digits -> ~6 data symbols + start/check/stop ~100 modules.
+            // If we use narrow=4: 100*4 = 400 dots. Fits in 440.
+            // If longer, we must reduce to 3 or 2.
+            val isCompactNum = barcode.all { it.isDigit() } && barcode.length <= 14
+            val narrow = if (isEan13 || isCompactNum) 3 else 2 
+            // Using 3 is safer for "Full Length" without overflow risk for slightly longer codes.
+            // 4 might be too tight for edge cases. 
+            // 3: 100*3 = 300. 300/440 = 68%. 
+            // Let's try 4 for short numeric codes to really stretch it? 
+            // User requested "Full length". 
+            val finalNarrow = if (barcode.length <= 12 && barcode.all { it.isDigit() }) 4 else 3
 
-            cmds.append("BARCODE $startX,20,\"$barcodeType\",160,1,0,$narrow,$narrow,\"$barcode\"\r\n")
+            // Height Calculation
+            // User wants minimal distance between Code and Article (at bottom).
+            // Article Y ~ 270. (Font height ~20-30).
+            // Barcode Text (built-in) requires ~30 dots.
+            // So Barcode Bars should end at ~240.
+            // Start Y = 20. Height = 220.
+            val barHeight = 220
+
+            // Layout Barcode
+            // Calculate Center X
+            // Approx width estimate
+            val estimatedWidth = if (isEan13) 95 * finalNarrow else (barcode.length * 11 * finalNarrow) // Rough calc for 128
+            // For Code 128C it is much shorter: (Len/2 + 4) * 11 * narrow.
+            val actualWidth = if (isEan13) 95*finalNarrow else if(barcode.all { it.isDigit() }) ((barcode.length/2 + 5)*11*finalNarrow) else (barcode.length * 11 * finalNarrow)
+            
+            val x = (440 - actualWidth) / 2
+            val startX = if (x > 20) x else 20
+
+            cmds.append("BARCODE $startX,20,\"$barcodeType\",$barHeight,1,0,$finalNarrow,$finalNarrow,\"$barcode\"\r\n")
             
             // ARTICLE TEXT
-            // Position: Below barcode built-in text.
-            // Barcode Y=20, Height=160. Text usually adds ~40-50 dots. Block ends ~220.
-            // Let's place article at Y=230 to be close.
-            // Font "2" (Standard)
-            cmds.append("TEXT 220,230,\"2\",0,1,1,2,\"$article\"\r\n") // Center alignment needs manual calc or alignment command if available?
-            // TSPL TEXT doesn't auto-center unless specific firmware. 
-            // We use center coordinates? No, TEXT x,y is start.
-            // To center text properly we need to know char width.
-            // Font 2 is ~8x12 dots. 
-            // Let's simplified: Start at X=20 and let it print? Or estimate center.
-            // Better: use a safe left margin since length varies.
-            // Or try to center coarsely. 
-            // 440 width. Center 220.
-            // "TEXT" command has no alignment param in standard TSPL (some extensions do).
-            // Let's rely on visual center 220 is NOT center alignment, it's starting position.
-            // Wait, for TEXT command: TEXT x, y, "font", rotation, x-mul, y-mul, "content"
-            // There is no alignment.
-            // We'll estimate start X based on length?
-            // "Art: XYZ" ~ 10 chars. 10 * 8 * 1 = 80 dots wide. center = 220 - 40 = 180.
-            // Let's just start at X=20 to be safe and left-aligned, or try to center.
-            // User requested "like second photo". Second photo text is Centered.
-            // In second photo: "Art. NabZak..." is centered.
-            // I will use a simple heuristic to center.
+            // Position: Very bottom.
+            // 40mm = 320 dots.
+            // Let's place at 280 (leaving 40 dots / 5mm margin at bottom)
+            val fullArticle = "Арт: $article"
             
-            val charWidth = 8 // Font 2 approximate width
-            val textWidth = article.length * charWidth
+            // Center Text
+            val charWidth = 10 // Font 2 approx width scaled? Font 2 is 8x12.
+            // Let's estimate
+            val textWidth = fullArticle.length * 8
             val textX = (440 - textWidth) / 2
-            val finalTextX = if (textX > 0) textX else 10
+            val finalTx = if (textX > 10) textX else 10
             
-            cmds.append("TEXT $finalTextX,230,\"2\",0,1,1,\"$article\"\r\n")
+            cmds.append("TEXT $finalTx,275,\"2\",0,1,1,\"$fullArticle\"\r\n")
             
             cmds.append("PRINT 1,1\r\n")
             
